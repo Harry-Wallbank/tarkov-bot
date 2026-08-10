@@ -6,8 +6,13 @@
 // item gives the best combined ergonomics + recoil-reduction score. Optic
 // slots are skipped: scope choice is subjective and EFT's actual
 // sight-radius/zeroing tradeoffs aren't captured by this item data anyway.
-// Every other slot always gets filled, even if the best available option
-// is a net-negative pick, so the build is complete rather than sparse.
+// Required slots always get filled. Optional slots are otherwise left
+// empty — except a foregrip, which is always added if the weapon has one
+// available. On many weapons a foregrip slot is nested behind an optional
+// rail-mount slot (e.g. a KeyMod section on the handguard); that
+// intermediate mount is the one "extra" optional part that still gets
+// added when — and only when — it's the path to a foregrip. See
+// `candidateLeadsToForegrip`.
 //
 // Conflict avoidance: items carry top-level `conflictingItems` (specific
 // item IDs) and `conflictingCategories` (category IDs) fields — e.g. one
@@ -29,7 +34,9 @@
 
 const SKIP_SLOT_PATTERN = /scope/i;
 const MAGAZINE_SLOT_PATTERN = /magazine/i;
+const FOREGRIP_SLOT_PATTERN = /foregrip/i;
 const MAX_DEPTH = 6;
+const FOREGRIP_LOOKAHEAD_DEPTH = 4;
 
 const SLOT_LABEL_OVERRIDES = {
   sight_rear: 'Rear Sight',
@@ -80,6 +87,22 @@ function conflictsWithChosen(candidate, chosenItems) {
   return false;
 }
 
+// True if equipping `candidate` would (immediately, or after equipping
+// whatever it in turn best exposes) expose a foregrip slot. Used to let an
+// otherwise-skipped optional mount slot through only when it's the
+// necessary path to a foregrip.
+function candidateLeadsToForegrip(candidate, items, depth) {
+  if (depth > FOREGRIP_LOOKAHEAD_DEPTH) return false;
+  for (const childSlot of candidate.properties?.slots || []) {
+    if (FOREGRIP_SLOT_PATTERN.test(childSlot.nameId)) return true;
+    for (const id of childSlot.filters?.allowedItems || []) {
+      const child = items[id];
+      if (child?.properties && candidateLeadsToForegrip(child, items, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 // Looks for a still-unsatisfied keyword/category requirement among this
 // slot's candidates. Keyword matching is a simple substring check against
 // the item's normalizedName (e.g. "suppressor" matches
@@ -124,8 +147,18 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
     }
 
     if (!chosen) {
+      const isForegripSlot = FOREGRIP_SLOT_PATTERN.test(slot.nameId);
+      let eligible = candidates;
+
+      // Skip optional slots entirely — except a foregrip itself, or a
+      // mount that's the only path to reach one.
+      if (!slot.required && !isForegripSlot) {
+        eligible = candidates.filter((c) => candidateLeadsToForegrip(c, items, 0));
+        if (eligible.length === 0) continue;
+      }
+
       let bestScore = -Infinity;
-      for (const candidate of candidates) {
+      for (const candidate of eligible) {
         const score = scoreMod(candidate.properties);
         if (score > bestScore) {
           bestScore = score;

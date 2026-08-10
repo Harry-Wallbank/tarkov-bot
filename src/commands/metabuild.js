@@ -86,7 +86,7 @@ module.exports = {
         url: weapon.wikiLink,
         description: truncate(formatBuild(weapon.build, questRequirement), 3800),
         imageUrl: weapon.imageUrl,
-        footer: 'Greedy per-slot optimizer over Tarkov.dev data. Optics omitted; image is the closest existing preset match, not a custom render.',
+        footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + a foregrip only — optics and other optional slots skipped. Image is the closest existing preset match, not a custom render.',
       });
 
       await interaction.editReply({ embeds: [embed] });
