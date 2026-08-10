@@ -7,6 +7,13 @@
 // skipped: scope choice is subjective and EFT's actual sight-radius/zeroing
 // tradeoffs aren't captured by this item data anyway.
 //
+// Callers can force specific parts in ahead of the greedy pick via
+// `options.keywords` (free-text stipulations like "suppressor, foregrip")
+// and `options.categoryIds` (item category IDs, used for a quest's
+// `containsCategory` requirement) — see optimizeSlots' forced-pick check.
+// Anything not satisfied by any compatible slot is reported back so the
+// caller can tell the user it couldn't be fit onto this weapon.
+//
 // This only runs against the JSON fallback dataset (see tarkovJsonApi.js),
 // not GraphQL — recursing through nested mod slot trees needs a query shape
 // nobody could verify while api.tarkov.dev has been down this entire build.
@@ -46,7 +53,27 @@ function scoreMod(properties) {
   return ergonomics - recoilModifier * 100;
 }
 
-function optimizeSlots(slots, items, depth, parts, visited, displayName) {
+// Looks for a still-unsatisfied keyword/category requirement among this
+// slot's candidates. Keyword matching is a simple substring check against
+// the item's normalizedName (e.g. "suppressor" matches
+// "ase-suppressor-762x51") since that field is always real text, unlike
+// the placeholder `name`.
+function findForcedCandidate(candidates, state) {
+  for (const candidate of candidates) {
+    const nameKey = (candidate.normalizedName || '').toLowerCase().replace(/-/g, ' ');
+    for (const keyword of state.pendingKeywords) {
+      if (nameKey.includes(keyword)) return { candidate, requirement: { type: 'keyword', value: keyword } };
+    }
+    for (const categoryId of state.pendingCategoryIds) {
+      if (candidate.categories?.includes(categoryId)) {
+        return { candidate, requirement: { type: 'category', value: categoryId } };
+      }
+    }
+  }
+  return null;
+}
+
+function optimizeSlots(slots, items, depth, parts, visited, displayName, state) {
   if (depth > MAX_DEPTH) return;
 
   for (const slot of slots || []) {
@@ -58,29 +85,48 @@ function optimizeSlots(slots, items, depth, parts, visited, displayName) {
 
     if (candidates.length === 0) continue;
 
-    let best = null;
-    let bestScore = -Infinity;
-    for (const candidate of candidates) {
-      const score = scoreMod(candidate.properties);
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
+    let chosen = null;
+    let satisfiedRequirement = null;
+
+    if (state.pendingKeywords.size > 0 || state.pendingCategoryIds.size > 0) {
+      const forced = findForcedCandidate(candidates, state);
+      if (forced) {
+        chosen = forced.candidate;
+        satisfiedRequirement = forced.requirement;
       }
     }
-    if (!best) continue;
-    if (!slot.required && bestScore <= 0) continue;
 
-    visited.add(best.id);
+    if (!chosen) {
+      let bestScore = -Infinity;
+      for (const candidate of candidates) {
+        const score = scoreMod(candidate.properties);
+        if (score > bestScore) {
+          bestScore = score;
+          chosen = candidate;
+        }
+      }
+      if (!chosen) continue;
+      if (!slot.required && bestScore <= 0) continue;
+    }
+
+    visited.add(chosen.id);
+    if (satisfiedRequirement) {
+      const pending = satisfiedRequirement.type === 'keyword' ? state.pendingKeywords : state.pendingCategoryIds;
+      pending.delete(satisfiedRequirement.value);
+      state.satisfied.push({ ...satisfiedRequirement, itemName: displayName(chosen), slotName: humanizeSlotName(slot.nameId) });
+    }
+
     parts.push({
       slotName: humanizeSlotName(slot.nameId),
-      name: displayName(best),
-      ergonomics: best.properties.ergonomics ?? 0,
-      recoilModifier: best.properties.recoilModifier ?? 0,
-      price: bestPrice(best),
+      name: displayName(chosen),
+      ergonomics: chosen.properties.ergonomics ?? 0,
+      recoilModifier: chosen.properties.recoilModifier ?? 0,
+      price: bestPrice(chosen),
+      forced: Boolean(satisfiedRequirement),
     });
 
-    if (best.properties.slots?.length) {
-      optimizeSlots(best.properties.slots, items, depth + 1, parts, visited, displayName);
+    if (chosen.properties.slots?.length) {
+      optimizeSlots(chosen.properties.slots, items, depth + 1, parts, visited, displayName, state);
     }
   }
 }
@@ -117,10 +163,16 @@ function pickBestMagazine(weapon, items, displayName) {
 
 // `displayName` is injected (rather than imported) so this module has no
 // dependency on where the item index came from.
-function optimizeWeapon(weapon, items, displayName) {
+function optimizeWeapon(weapon, items, displayName, options = {}) {
   const parts = [];
   const visited = new Set([weapon.id]);
-  optimizeSlots(weapon.properties.slots, items, 0, parts, visited, displayName);
+  const state = {
+    pendingKeywords: new Set((options.keywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean)),
+    pendingCategoryIds: new Set(options.categoryIds || []),
+    satisfied: [],
+  };
+
+  optimizeSlots(weapon.properties.slots, items, 0, parts, visited, displayName, state);
 
   const baseErgonomics = weapon.properties.ergonomics ?? 0;
   const baseRecoilVertical = weapon.properties.recoilVertical ?? 0;
@@ -148,6 +200,11 @@ function optimizeWeapon(weapon, items, displayName) {
     totalCost: Math.round(totalCost),
     parts,
     magazine: pickBestMagazine(weapon, items, displayName),
+    requirements: {
+      satisfied: state.satisfied,
+      unmetKeywords: [...state.pendingKeywords],
+      unmetCategoryIds: [...state.pendingCategoryIds],
+    },
   };
 }
 

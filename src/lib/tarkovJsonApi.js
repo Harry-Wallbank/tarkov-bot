@@ -65,6 +65,75 @@ async function getTraderNameMap() {
   return map;
 }
 
+async function getCategoryNameMap() {
+  const dump = await fetchDataset('items');
+  const map = {};
+  for (const [id, category] of Object.entries(dump.data.itemCategories || {})) {
+    map[id] = displayName(category);
+  }
+  return map;
+}
+
+async function getBuildWeaponTasks() {
+  const dump = await fetchDataset('tasks');
+  return Object.values(dump.data.tasks)
+    .map((task) => ({ task, objective: (task.objectives || []).find((o) => o.type === 'buildWeapon') }))
+    .filter(({ objective }) => objective);
+}
+
+// Weapon names for /metabuild's autocomplete.
+async function searchWeaponNames(query, limit = 25) {
+  const items = await getItemsIndex();
+  const needle = compact(query);
+
+  return Object.values(items)
+    .filter((it) => it.properties?.propertiesType === 'ItemPropertiesWeapon')
+    .map((it) => ({ name: displayName(it), key: compact(it.normalizedName) }))
+    .filter(({ key }) => key.includes(needle))
+    .sort((a, b) => a.key.length - b.key.length)
+    .slice(0, limit)
+    .map(({ name }) => name);
+}
+
+// Gunsmith-style quest names for /metabuild's `quest` autocomplete.
+async function searchBuildWeaponQuestNames(query, limit = 25) {
+  const buildTasks = await getBuildWeaponTasks();
+  const needle = compact(query);
+
+  return buildTasks
+    .map(({ task }) => displayName(task))
+    .filter((name) => compact(name).includes(needle))
+    .slice(0, limit);
+}
+
+// Resolves a quest name to its buildWeapon requirement: the base weapon
+// it's for, required attachment categories, and the numeric thresholds the
+// finished build has to meet in-game.
+async function getQuestBuildRequirement(questName) {
+  const [buildTasks, items, categoryNames] = await Promise.all([
+    getBuildWeaponTasks(),
+    getItemsIndex(),
+    getCategoryNameMap(),
+  ]);
+  const needle = compact(questName);
+
+  const match = buildTasks.find(({ task }) => compact(displayName(task)) === needle) ||
+    buildTasks.find(({ task }) => compact(displayName(task)).includes(needle));
+  if (!match) return null;
+
+  const { task, objective } = match;
+  const weaponItem = items[objective.item] || null;
+
+  return {
+    questName: displayName(task),
+    weaponName: weaponItem ? displayName(weaponItem) : null,
+    weaponId: objective.item,
+    requiredCategoryIds: objective.containsCategory || [],
+    requiredCategoryNames: (objective.containsCategory || []).map((id) => categoryNames[id] || id),
+    buildAttributes: objective.buildAttributes || {},
+  };
+}
+
 function normalizeItem(it, traderNames) {
   const bestSell = (it.sellToTrader || []).reduce(
     (best, cur) => (best === null || cur.priceRUB > best.priceRUB ? cur : best),
@@ -105,7 +174,12 @@ async function searchItem(name, limit = 5) {
   return matches.map((it) => normalizeItem(it, traderNames));
 }
 
-async function getWeaponMetaBuild(name) {
+// `options.keywords`: free-text terms (e.g. from a user-supplied
+// stipulation like "suppressor, foregrip") to force into the build ahead of
+// the normal greedy pick, if any compatible slot has a matching item.
+// `options.categoryIds`: item category IDs to force in the same way — used
+// for a quest's `containsCategory` requirement.
+async function getWeaponMetaBuild(name, options = {}) {
   const items = await getItemsIndex();
   const needle = compact(name);
 
@@ -115,7 +189,7 @@ async function getWeaponMetaBuild(name) {
   if (!weapon) return null;
 
   const { optimizeWeapon } = require('./metaBuildOptimizer');
-  const build = optimizeWeapon(weapon, items, displayName);
+  const build = optimizeWeapon(weapon, items, displayName, options);
 
   const defaultPresetId = weapon.properties.defaultPreset || null;
   const defaultPreset = defaultPresetId ? items[defaultPresetId] : null;
@@ -128,6 +202,7 @@ async function getWeaponMetaBuild(name) {
     null;
 
   return {
+    id: weapon.id,
     name: displayName(weapon),
     wikiLink: weapon.wikiLink || null,
     imageUrl,
@@ -135,4 +210,10 @@ async function getWeaponMetaBuild(name) {
   };
 }
 
-module.exports = { searchItem, getWeaponMetaBuild };
+module.exports = {
+  searchItem,
+  getWeaponMetaBuild,
+  searchWeaponNames,
+  searchBuildWeaponQuestNames,
+  getQuestBuildRequirement,
+};
