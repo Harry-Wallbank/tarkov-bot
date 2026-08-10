@@ -3,7 +3,12 @@ require('dotenv').config();
 function required(name) {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+    console.error(
+      `Missing required environment variable: ${name}\n` +
+        'The bot refuses to start without it. Create a .env file (copy .env.example) ' +
+        'with real values, or set it in your host/platform\'s environment variables.'
+    );
+    process.exit(1);
   }
   return value;
 }
