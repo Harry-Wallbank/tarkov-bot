@@ -191,10 +191,26 @@ async function getWeaponMetaBuild(name, options = {}) {
   const { optimizeWeapon } = require('./metaBuildOptimizer');
   const build = optimizeWeapon(weapon, items, displayName, options);
 
-  const defaultPresetId = weapon.properties.defaultPreset || null;
-  const defaultPreset = defaultPresetId ? items[defaultPresetId] : null;
+  // Tarkov.dev doesn't render a custom image per arbitrary attachment combo
+  // — there's no API for that. Best available approximation: pick whichever
+  // existing preset shares the most parts with what the optimizer actually
+  // chose, rather than always showing the same default-preset image
+  // regardless of the build.
+  const builtPartIds = new Set(build.parts.map((p) => p.id));
+  let bestPreset = null;
+  let bestOverlap = -1;
+  for (const presetId of weapon.properties.presets || []) {
+    const preset = items[presetId];
+    if (!preset) continue;
+    const overlap = (preset.containsItems || []).reduce((count, ci) => count + (builtPartIds.has(ci.item) ? 1 : 0), 0);
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      bestPreset = preset;
+    }
+  }
+
   const imageUrl =
-    defaultPreset?.inspectImageLink ||
+    (bestOverlap > 0 ? bestPreset?.inspectImageLink : null) ||
     weapon.inspectImageLink ||
     weapon.image8xLink ||
     weapon.gridImageLink ||

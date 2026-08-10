@@ -2,10 +2,19 @@
 //
 // For every mod slot on a weapon — recursing into whatever sub-slots the
 // chosen mod itself exposes (e.g. a barrel's muzzle thread, then that
-// muzzle device's own sub-slots) — picks whichever allowed item gives the
-// best combined ergonomics + recoil-reduction score. Optic slots are
-// skipped: scope choice is subjective and EFT's actual sight-radius/zeroing
-// tradeoffs aren't captured by this item data anyway.
+// muzzle device's own sub-slots) — picks whichever allowed, non-conflicting
+// item gives the best combined ergonomics + recoil-reduction score. Optic
+// slots are skipped: scope choice is subjective and EFT's actual
+// sight-radius/zeroing tradeoffs aren't captured by this item data anyway.
+// Every other slot always gets filled, even if the best available option
+// is a net-negative pick, so the build is complete rather than sparse.
+//
+// Conflict avoidance: items carry top-level `conflictingItems` (specific
+// item IDs) and `conflictingCategories` (category IDs) fields — e.g. one
+// barrel can outright conflict with three specific handguards. A candidate
+// is rejected if it conflicts with anything already chosen, or if anything
+// already chosen conflicts with it (checked both directions since which
+// side declares the conflict isn't consistent in the data).
 //
 // Callers can force specific parts in ahead of the greedy pick via
 // `options.keywords` (free-text stipulations like "suppressor, foregrip")
@@ -53,6 +62,24 @@ function scoreMod(properties) {
   return ergonomics - recoilModifier * 100;
 }
 
+// Bidirectional: rejects a candidate if it conflicts with anything already
+// chosen, OR if anything already chosen declares a conflict with it.
+function conflictsWithChosen(candidate, chosenItems) {
+  const candidateConflictItems = candidate.conflictingItems || [];
+  const candidateConflictCategories = candidate.conflictingCategories || [];
+  const candidateCategories = candidate.categories || [];
+
+  for (const other of chosenItems) {
+    if (candidateConflictItems.includes(other.id)) return true;
+    if ((other.conflictingItems || []).includes(candidate.id)) return true;
+
+    const otherCategories = other.categories || [];
+    if (candidateConflictCategories.some((cat) => otherCategories.includes(cat))) return true;
+    if ((other.conflictingCategories || []).some((cat) => candidateCategories.includes(cat))) return true;
+  }
+  return false;
+}
+
 // Looks for a still-unsatisfied keyword/category requirement among this
 // slot's candidates. Keyword matching is a simple substring check against
 // the item's normalizedName (e.g. "suppressor" matches
@@ -73,7 +100,7 @@ function findForcedCandidate(candidates, state) {
   return null;
 }
 
-function optimizeSlots(slots, items, depth, parts, visited, displayName, state) {
+function optimizeSlots(slots, items, depth, parts, visited, chosenItems, displayName, state) {
   if (depth > MAX_DEPTH) return;
 
   for (const slot of slots || []) {
@@ -81,7 +108,7 @@ function optimizeSlots(slots, items, depth, parts, visited, displayName, state) 
 
     const candidates = (slot.filters?.allowedItems || [])
       .map((id) => items[id])
-      .filter((it) => it && it.properties && !visited.has(it.id));
+      .filter((it) => it && it.properties && !visited.has(it.id) && !conflictsWithChosen(it, chosenItems));
 
     if (candidates.length === 0) continue;
 
@@ -106,10 +133,10 @@ function optimizeSlots(slots, items, depth, parts, visited, displayName, state) 
         }
       }
       if (!chosen) continue;
-      if (!slot.required && bestScore <= 0) continue;
     }
 
     visited.add(chosen.id);
+    chosenItems.push(chosen);
     if (satisfiedRequirement) {
       const pending = satisfiedRequirement.type === 'keyword' ? state.pendingKeywords : state.pendingCategoryIds;
       pending.delete(satisfiedRequirement.value);
@@ -117,6 +144,7 @@ function optimizeSlots(slots, items, depth, parts, visited, displayName, state) 
     }
 
     parts.push({
+      id: chosen.id,
       slotName: humanizeSlotName(slot.nameId),
       name: displayName(chosen),
       ergonomics: chosen.properties.ergonomics ?? 0,
@@ -126,7 +154,7 @@ function optimizeSlots(slots, items, depth, parts, visited, displayName, state) 
     });
 
     if (chosen.properties.slots?.length) {
-      optimizeSlots(chosen.properties.slots, items, depth + 1, parts, visited, displayName, state);
+      optimizeSlots(chosen.properties.slots, items, depth + 1, parts, visited, chosenItems, displayName, state);
     }
   }
 }
@@ -143,17 +171,18 @@ function scoreMagazine(properties) {
   return capacity - malfunctionChance * 300 - Math.abs(Math.min(ergonomics, 0));
 }
 
-function pickBestMagazine(weapon, items, displayName) {
+function pickBestMagazine(weapon, items, chosenItems, displayName) {
   const magSlot = (weapon.properties.slots || []).find((s) => MAGAZINE_SLOT_PATTERN.test(s.nameId));
   if (!magSlot) return null;
 
   const candidates = (magSlot.filters?.allowedItems || [])
     .map((id) => items[id])
-    .filter((it) => it?.properties?.capacity != null);
+    .filter((it) => it?.properties?.capacity != null && !conflictsWithChosen(it, chosenItems));
   if (candidates.length === 0) return null;
 
   const best = candidates.reduce((a, b) => (scoreMagazine(b.properties) > scoreMagazine(a.properties) ? b : a));
   return {
+    id: best.id,
     name: displayName(best),
     capacity: best.properties.capacity,
     ergonomics: best.properties.ergonomics ?? 0,
@@ -166,13 +195,14 @@ function pickBestMagazine(weapon, items, displayName) {
 function optimizeWeapon(weapon, items, displayName, options = {}) {
   const parts = [];
   const visited = new Set([weapon.id]);
+  const chosenItems = [];
   const state = {
     pendingKeywords: new Set((options.keywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean)),
     pendingCategoryIds: new Set(options.categoryIds || []),
     satisfied: [],
   };
 
-  optimizeSlots(weapon.properties.slots, items, 0, parts, visited, displayName, state);
+  optimizeSlots(weapon.properties.slots, items, 0, parts, visited, chosenItems, displayName, state);
 
   const baseErgonomics = weapon.properties.ergonomics ?? 0;
   const baseRecoilVertical = weapon.properties.recoilVertical ?? 0;
@@ -199,7 +229,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     recoilHorizontal: Math.round(recoilHorizontal),
     totalCost: Math.round(totalCost),
     parts,
-    magazine: pickBestMagazine(weapon, items, displayName),
+    magazine: pickBestMagazine(weapon, items, chosenItems, displayName),
     requirements: {
       satisfied: state.satisfied,
       unmetKeywords: [...state.pendingKeywords],
