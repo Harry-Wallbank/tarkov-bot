@@ -3,3 +3,4 @@ node_modules/
 src/data/reactionRoles.json
 src/data/tarkovAccess.json
 npm-debug.log*
+CLAUDE.md
