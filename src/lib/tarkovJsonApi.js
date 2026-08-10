@@ -138,4 +138,34 @@ async function getWeaponWithPresets(name) {
   };
 }
 
-module.exports = { searchItem, getWeaponWithPresets };
+async function getWeaponMetaBuild(name) {
+  const items = await getItemsIndex();
+  const needle = compact(name);
+
+  const weapon = Object.values(items).find(
+    (it) => it.properties?.propertiesType === 'ItemPropertiesWeapon' && compact(it.normalizedName).includes(needle)
+  );
+  if (!weapon) return null;
+
+  const { optimizeWeapon } = require('./metaBuildOptimizer');
+  const build = optimizeWeapon(weapon, items, displayName);
+
+  const defaultPresetId = weapon.properties.defaultPreset || null;
+  const defaultPreset = defaultPresetId ? items[defaultPresetId] : null;
+  const imageUrl =
+    defaultPreset?.inspectImageLink ||
+    weapon.inspectImageLink ||
+    weapon.image8xLink ||
+    weapon.gridImageLink ||
+    weapon.iconLink ||
+    null;
+
+  return {
+    name: displayName(weapon),
+    wikiLink: weapon.wikiLink || null,
+    imageUrl,
+    build,
+  };
+}
+
+module.exports = { searchItem, getWeaponWithPresets, getWeaponMetaBuild };

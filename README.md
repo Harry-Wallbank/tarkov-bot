@@ -66,16 +66,16 @@ itself with the new code. See [`src/lib/autoUpdater.js`](src/lib/autoUpdater.js)
 - **`/role add user:@Name role:@Role`** / **`/role remove ...`** — restricted to members with the *Manage Roles* permission.
 - **`/reactionrole create title:"Pick your role" emoji1:🔫 role1:@PMC emoji2:🩹 role2:@Scav`** — posts an embed in the current (or chosen) channel; reacting adds the role, un-reacting removes it. Supports up to 5 emoji/role pairs. `/reactionrole delete message_id:<id>` stops tracking a message (also restricted to *Manage Roles*).
 - **`/tarkov query:M4A1`** — one command for items, ammo, and quests. It tries, in order: item/ammo match (price or damage/penetration stats, with the item's image) → quest match (map, keys required, with a map screenshot) → Escape from Tarkov Wiki summary (article excerpt + image) as a fallback. Every result renders as the same style of embed: title linked to the source, a short key-details block, and an image.
-- **`/metabuild weapon:M4A1`** — shows the weapon's default preset and its attachments/ergonomics/recoil, sourced from Tarkov.dev's preset data (this is the game's default/documented build, not a curated "meta" ranking — Tarkov.dev doesn't publish a meta tier list).
+- **`/metabuild weapon:M4A1`** — a greedy per-slot loadout optimizer, not just the default preset. For every mod slot on the weapon (recursing into whatever sub-slots the chosen mod itself exposes — e.g. a barrel's muzzle thread, then that muzzle device's own sub-slots), it picks whichever allowed part gives the best combined ergonomics + recoil-reduction score, then reports the full parts list, before/after ergonomics and recoil, total cost from traders, and a magazine pick balanced for capacity vs. reliability (not just "biggest mag wins"). Optic slots are skipped — scope choice is subjective and isn't meaningfully captured by ergo/recoil stats. See [`src/lib/metaBuildOptimizer.js`](src/lib/metaBuildOptimizer.js). This is **not** Tarkov.dev's own data or a community-curated meta ranking — it's this bot's own greedy heuristic over Tarkov.dev's item stats, which the embed footer says explicitly.
 
 ### Automatic fallback when Tarkov.dev's GraphQL API is down
 
 `api.tarkov.dev`'s GraphQL endpoint has an active, ongoing outage (tracked at
 [the-hideout/tarkov-api#474](https://github.com/the-hideout/tarkov-api/issues/474)).
-Item/ammo lookups (`/tarkov`) and weapon presets (`/metabuild`) automatically
-fall back to [`json.tarkov.dev`](https://json.tarkov.dev), a static dataset
-dump that stayed up throughout the outage, when the GraphQL call fails —
-see [`src/lib/tarkovData.js`](src/lib/tarkovData.js). The embed footer says
+Item/ammo lookups (`/tarkov`) automatically fall back to
+[`json.tarkov.dev`](https://json.tarkov.dev), a static dataset dump that
+stayed up throughout the outage, when the GraphQL call fails — see
+[`src/lib/tarkovData.js`](src/lib/tarkovData.js). The embed footer says
 which source actually answered. Two caveats specific to the fallback:
 
 - That dataset ships **untranslated** — raw item/task names are literal
@@ -85,14 +85,21 @@ which source actually answered. Two caveats specific to the fallback:
 - Search matching in the fallback is plain substring matching on
   `normalizedName` (no fuzzy ranking like the GraphQL API has), so an
   ambiguous single-word query can occasionally surface a weapon *part*
-  ahead of the full weapon in `/tarkov` — `/metabuild` isn't affected since
-  it filters specifically for weapons.
+  ahead of the full weapon in `/tarkov`.
 
 Quest search (`/tarkov` falling through to a quest match) has no JSON-API
 equivalent — the static dump's task objectives/keys aren't cleanly
 resolvable without the locale data GraphQL provides — so quest lookups only
 use GraphQL and fall straight through to the wiki summary while the outage
 persists.
+
+`/metabuild`'s optimizer is a special case: it **only** uses the
+`json.tarkov.dev` dataset, regardless of whether GraphQL is up. Recursively
+walking nested mod slot trees needs a query shape nobody could verify while
+`api.tarkov.dev` has been down for this project's entire build — rather than
+ship an untested GraphQL query for something this involved, `/metabuild`
+sticks to the one data source that's actually been exercised against real
+responses.
 
 ## Notes / known limitations
 
