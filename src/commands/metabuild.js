@@ -49,7 +49,7 @@ module.exports = {
         title: `${weapon.name} — ${weapon.preset.name || 'Default build'}`,
         url: weapon.wikiLink,
         description,
-        imageUrl: weapon.imageUrl,
+        imageUrl: weapon.preset.imageUrl || weapon.imageUrl,
         footer: `Source: ${source} (default preset, not a curated community meta ranking)`,
       });
 

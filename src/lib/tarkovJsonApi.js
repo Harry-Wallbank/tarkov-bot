@@ -123,6 +123,7 @@ async function getWeaponWithPresets(name) {
         ergonomics: presetItem.properties?.ergonomics ?? null,
         recoilVertical: presetItem.properties?.recoilVertical ?? null,
         recoilHorizontal: presetItem.properties?.recoilHorizontal ?? null,
+        imageUrl: presetItem.inspectImageLink || presetItem.image8xLink || presetItem.gridImageLink || null,
         attachments: (presetItem.containsItems || [])
           .filter((ci) => ci.item !== weapon.id)
           .map((ci) => ({ name: displayName(items[ci.item] || { id: ci.item }), count: ci.count })),

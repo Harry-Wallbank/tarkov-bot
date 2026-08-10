@@ -155,6 +155,8 @@ async function getWeaponWithPresets(name) {
               ergonomics
               recoilVertical
               recoilHorizontal
+              inspectImageLink
+              gridImageLink
               containsItems { item { name } count }
             }
             presets {
@@ -162,6 +164,8 @@ async function getWeaponWithPresets(name) {
               ergonomics
               recoilVertical
               recoilHorizontal
+              inspectImageLink
+              gridImageLink
               containsItems { item { name } count }
             }
           }
@@ -181,6 +185,7 @@ async function getWeaponWithPresets(name) {
         ergonomics: rawPreset.ergonomics ?? null,
         recoilVertical: rawPreset.recoilVertical ?? null,
         recoilHorizontal: rawPreset.recoilHorizontal ?? null,
+        imageUrl: rawPreset.inspectImageLink || rawPreset.gridImageLink || null,
         attachments: (rawPreset.containsItems || [])
           .filter((ci) => ci.item.name !== weapon.name)
           .map((ci) => ({ name: ci.item.name, count: ci.count })),
