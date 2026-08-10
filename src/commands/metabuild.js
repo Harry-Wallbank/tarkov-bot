@@ -1,5 +1,4 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { ensureTarkovAccess } = require('../lib/tarkovAccessGuard');
 const {
   getWeaponMetaBuild,
   searchWeaponNames,
@@ -42,8 +41,6 @@ module.exports = {
   },
 
   async execute(interaction) {
-    if (!(await ensureTarkovAccess(interaction))) return;
-
     await interaction.deferReply();
     const weaponName = interaction.options.getString('weapon', true);
     const requirementsText = interaction.options.getString('requirements');

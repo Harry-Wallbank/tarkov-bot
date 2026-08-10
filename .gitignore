@@ -1,4 +1,5 @@
 node_modules/
 .env
 src/data/reactionRoles.json
+src/data/tarkovAccess.json
 npm-debug.log*
