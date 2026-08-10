@@ -139,65 +139,10 @@ async function searchTasks(name, limit = 5) {
     .map(normalizeTask);
 }
 
-async function getWeaponWithPresets(name) {
-  const data = await query(
-    `query Weapon($name: String!) {
-      items(name: $name, limit: 5) {
-        name
-        wikiLink
-        iconLink
-        gridImageLink
-        properties {
-          ... on ItemPropertiesWeapon {
-            caliber
-            defaultPreset {
-              name
-              ergonomics
-              recoilVertical
-              recoilHorizontal
-              inspectImageLink
-              gridImageLink
-              containsItems { item { name } count }
-            }
-            presets {
-              name
-              ergonomics
-              recoilVertical
-              recoilHorizontal
-              inspectImageLink
-              gridImageLink
-              containsItems { item { name } count }
-            }
-          }
-        }
-      }
-    }`,
-    { name }
-  );
-
-  const weapon = data.items.find((item) => item.properties && item.properties.caliber !== undefined);
-  if (!weapon) return null;
-
-  const rawPreset = weapon.properties.defaultPreset || (weapon.properties.presets || [])[0] || null;
-  const preset = rawPreset
-    ? {
-        name: rawPreset.name,
-        ergonomics: rawPreset.ergonomics ?? null,
-        recoilVertical: rawPreset.recoilVertical ?? null,
-        recoilHorizontal: rawPreset.recoilHorizontal ?? null,
-        imageUrl: rawPreset.inspectImageLink || rawPreset.gridImageLink || null,
-        attachments: (rawPreset.containsItems || [])
-          .filter((ci) => ci.item.name !== weapon.name)
-          .map((ci) => ({ name: ci.item.name, count: ci.count })),
-      }
-    : null;
-
-  return {
-    name: weapon.name,
-    wikiLink: weapon.wikiLink || null,
-    imageUrl: weapon.gridImageLink || weapon.iconLink || null,
-    preset,
-  };
+// Minimal, cheap query used only to check whether the API is up —
+// see tarkovApiHealth.js.
+async function ping() {
+  await query('query Ping { items(limit: 1) { id } }');
 }
 
-module.exports = { searchItem, searchTasks, getWeaponWithPresets };
+module.exports = { searchItem, searchTasks, ping };

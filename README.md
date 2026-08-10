@@ -76,7 +76,19 @@ Item/ammo lookups (`/tarkov`) automatically fall back to
 [`json.tarkov.dev`](https://json.tarkov.dev), a static dataset dump that
 stayed up throughout the outage, when the GraphQL call fails — see
 [`src/lib/tarkovData.js`](src/lib/tarkovData.js). The embed footer says
-which source actually answered. Two caveats specific to the fallback:
+which source actually answered.
+
+Rather than retrying a known-dead API on every single command,
+[`src/lib/tarkovApiHealth.js`](src/lib/tarkovApiHealth.js) checks GraphQL
+once a day (and immediately the moment any live request fails) and caches
+the result. Once GraphQL is marked down, every command skips straight to
+the JSON fallback (or fails fast for quest search, which has no fallback)
+for the rest of that day — it only tries GraphQL again on the next daily
+check, not the instant the API might recover. That's a deliberate tradeoff
+for simplicity: if `api.tarkov.dev` comes back mid-day, the bot won't
+notice until the next check, up to 24h later.
+
+Two caveats specific to the fallback:
 
 - That dataset ships **untranslated** — raw item/task names are literal
   `"<id> Name"` placeholders. Display names are instead derived from each

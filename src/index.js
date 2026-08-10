@@ -3,6 +3,7 @@ const path = require('node:path');
 const { Client, Collection, GatewayIntentBits, Partials } = require('discord.js');
 const config = require('./config');
 const { startAutoUpdateSchedule } = require('./lib/autoUpdater');
+const { startDailyHealthCheck } = require('./lib/tarkovApiHealth');
 
 const client = new Client({
   intents: [
@@ -32,6 +33,8 @@ for (const file of fs.readdirSync(eventsPath).filter((f) => f.endsWith('.js'))) 
 }
 
 client.login(config.token);
+
+startDailyHealthCheck();
 
 if (config.autoUpdateEnabled) {
   startAutoUpdateSchedule(async () => {

@@ -105,39 +105,6 @@ async function searchItem(name, limit = 5) {
   return matches.map((it) => normalizeItem(it, traderNames));
 }
 
-async function getWeaponWithPresets(name) {
-  const items = await getItemsIndex();
-  const needle = compact(name);
-
-  const weapon = Object.values(items).find(
-    (it) => it.properties?.propertiesType === 'ItemPropertiesWeapon' && compact(it.normalizedName).includes(needle)
-  );
-  if (!weapon) return null;
-
-  const presetId = weapon.properties.defaultPreset || (weapon.properties.presets || [])[0] || null;
-  const presetItem = presetId ? items[presetId] : null;
-
-  const preset = presetItem
-    ? {
-        name: displayName(presetItem),
-        ergonomics: presetItem.properties?.ergonomics ?? null,
-        recoilVertical: presetItem.properties?.recoilVertical ?? null,
-        recoilHorizontal: presetItem.properties?.recoilHorizontal ?? null,
-        imageUrl: presetItem.inspectImageLink || presetItem.image8xLink || presetItem.gridImageLink || null,
-        attachments: (presetItem.containsItems || [])
-          .filter((ci) => ci.item !== weapon.id)
-          .map((ci) => ({ name: displayName(items[ci.item] || { id: ci.item }), count: ci.count })),
-      }
-    : null;
-
-  return {
-    name: displayName(weapon),
-    wikiLink: weapon.wikiLink || null,
-    imageUrl: weapon.gridImageLink || weapon.iconLink || null,
-    preset,
-  };
-}
-
 async function getWeaponMetaBuild(name) {
   const items = await getItemsIndex();
   const needle = compact(name);
@@ -168,4 +135,4 @@ async function getWeaponMetaBuild(name) {
   };
 }
 
-module.exports = { searchItem, getWeaponWithPresets, getWeaponMetaBuild };
+module.exports = { searchItem, getWeaponMetaBuild };
