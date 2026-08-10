@@ -11,6 +11,8 @@ A Discord bot (Node.js + discord.js v14) that:
   [Tarkov.dev](https://tarkov.dev) GraphQL API and the
   [Escape from Tarkov Wiki](https://escapefromtarkov.fandom.com/) — but
   **only for an allowed role and/or an allowed list of user IDs** you designate
+- **Auto-updates itself daily** from this git repo (fast-forward pull + restart) so
+  self-hosted instances stay current without manual redeploys
 
 ## 1. Create the Discord application
 
@@ -43,6 +45,20 @@ npm start                 # logs the bot in
 ```
 
 Re-run `deploy-commands` any time you add/change a command. If you remove `GUILD_ID` later for production, commands register globally and take up to ~1 hour to show up everywhere.
+
+**Deploy via `git clone`, not a zip download** — the auto-updater (below) needs a real git checkout with an `origin` remote to work.
+
+### Staying up to date automatically
+
+Once a day, the bot fetches this repo, and if `origin`'s branch has moved,
+it pulls (fast-forward only — it never touches local files, and refuses if
+your checkout has conflicting local edits to a tracked file), reinstalls
+dependencies if `package.json`/`package-lock.json` changed, then restarts
+itself with the new code. See [`src/lib/autoUpdater.js`](src/lib/autoUpdater.js).
+
+- Requires `git` on `PATH` and the working directory to be a real git clone with an `origin` remote — if it isn't, the check just logs a message and does nothing.
+- Set `AUTO_UPDATE=false` in `.env` to disable it entirely (e.g. if you maintain a fork with local patches).
+- If you run the bot under a process manager (pm2, a systemd service, Docker with `restart: always`, etc.), the self-respawn plays nicely with it. If you just run `npm start` in a terminal, the bot restarts itself in-place — no supervisor required.
 
 ## Usage
 
@@ -84,5 +100,3 @@ persists.
 - The Tarkov Wiki has no official API; `/tarkov wiki` uses Fandom's public MediaWiki search endpoint, which is unauthenticated and could change or rate-limit independently of Tarkov.dev.
 - Reaction-role mappings are stored in `src/data/reactionRoles.json` (created automatically, git-ignored). Back it up if you move hosts.
 - This is a single-process bot with no database — fine for one server; if you need it across many large servers, swap the JSON store for a real database.
-
-test line for auto-update verification
