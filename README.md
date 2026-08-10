@@ -84,3 +84,5 @@ persists.
 - The Tarkov Wiki has no official API; `/tarkov wiki` uses Fandom's public MediaWiki search endpoint, which is unauthenticated and could change or rate-limit independently of Tarkov.dev.
 - Reaction-role mappings are stored in `src/data/reactionRoles.json` (created automatically, git-ignored). Back it up if you move hosts.
 - This is a single-process bot with no database — fine for one server; if you need it across many large servers, swap the JSON store for a real database.
+
+test line for auto-update verification
