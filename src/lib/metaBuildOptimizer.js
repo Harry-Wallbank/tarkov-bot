@@ -7,12 +7,18 @@
 // slots are skipped: scope choice is subjective and EFT's actual
 // sight-radius/zeroing tradeoffs aren't captured by this item data anyway.
 // Required slots always get filled. Optional slots are otherwise left
-// empty — except a foregrip, which is always added if the weapon has one
-// available. On many weapons a foregrip slot is nested behind an optional
-// rail-mount slot (e.g. a KeyMod section on the handguard); that
-// intermediate mount is the one "extra" optional part that still gets
-// added when — and only when — it's the path to a foregrip. See
-// `candidateLeadsToForegrip`.
+// empty — except a stock or foregrip, which are always added if the
+// weapon has either available. Both are often nested behind an
+// intermediate optional slot (e.g. an AK-to-M4 buffer tube adapter, which
+// itself scores poorly on its own stats but unlocks a whole tree of M4
+// stocks); that intermediate part is added when — and only when — it's the
+// path to a stock or foregrip. See `candidateLeadsToAlwaysFillSlot`.
+//
+// Candidates aren't ranked by their own immediate ergonomics/recoil alone —
+// that would always lose to a direct part for exactly the adapter case
+// above. Instead each candidate is ranked by its best achievable subtree
+// score: its own score, plus the best score recursively achievable through
+// whatever slots it exposes. See `subtreeScore`.
 //
 // Conflict avoidance: items carry top-level `conflictingItems` (specific
 // item IDs) and `conflictingCategories` (category IDs) fields — e.g. one
@@ -34,9 +40,9 @@
 
 const SKIP_SLOT_PATTERN = /scope/i;
 const MAGAZINE_SLOT_PATTERN = /magazine/i;
-const FOREGRIP_SLOT_PATTERN = /foregrip/i;
+const ALWAYS_FILL_SLOT_PATTERN = /foregrip|stock/i;
 const MAX_DEPTH = 6;
-const FOREGRIP_LOOKAHEAD_DEPTH = 4;
+const LOOKAHEAD_DEPTH = 4;
 
 const SLOT_LABEL_OVERRIDES = {
   sight_rear: 'Rear Sight',
@@ -88,19 +94,55 @@ function conflictsWithChosen(candidate, chosenItems) {
 }
 
 // True if equipping `candidate` would (immediately, or after equipping
-// whatever it in turn best exposes) expose a foregrip slot. Used to let an
-// otherwise-skipped optional mount slot through only when it's the
-// necessary path to a foregrip.
-function candidateLeadsToForegrip(candidate, items, depth) {
-  if (depth > FOREGRIP_LOOKAHEAD_DEPTH) return false;
+// whatever it in turn best exposes) expose a stock or foregrip slot. Used
+// to let an otherwise-skipped optional slot through only when it's the
+// necessary path to one — e.g. an AK-to-M4 buffer tube adapter, which
+// exposes an entirely different tree of M4-pattern stocks.
+function candidateLeadsToAlwaysFillSlot(candidate, items, depth) {
+  if (depth > LOOKAHEAD_DEPTH) return false;
   for (const childSlot of candidate.properties?.slots || []) {
-    if (FOREGRIP_SLOT_PATTERN.test(childSlot.nameId)) return true;
+    if (ALWAYS_FILL_SLOT_PATTERN.test(childSlot.nameId)) return true;
     for (const id of childSlot.filters?.allowedItems || []) {
       const child = items[id];
-      if (child?.properties && candidateLeadsToForegrip(child, items, depth + 1)) return true;
+      if (child?.properties && candidateLeadsToAlwaysFillSlot(child, items, depth + 1)) return true;
     }
   }
   return false;
+}
+
+// Best cumulative score achievable by equipping `item`: its own
+// ergonomics/recoil score, plus the best score recursively achievable
+// through whatever required/always-fill/leads-to-always-fill slots it
+// exposes. This is what candidates are actually ranked by — comparing raw
+// own-score alone would always favor a mediocre direct part over an
+// adapter that unlocks a much better subtree, since the adapter itself is
+// typically ergonomically neutral or slightly negative.
+function subtreeScore(item, items, depth) {
+  if (!item.properties) return 0;
+  let total = scoreMod(item.properties);
+  if (depth > LOOKAHEAD_DEPTH) return total;
+
+  for (const slot of item.properties.slots || []) {
+    if (SKIP_SLOT_PATTERN.test(slot.nameId) || MAGAZINE_SLOT_PATTERN.test(slot.nameId)) continue;
+
+    const candidateIds = slot.filters?.allowedItems || [];
+    const candidates = candidateIds.map((id) => items[id]).filter((it) => it?.properties);
+    if (candidates.length === 0) continue;
+
+    const isAlwaysFill = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
+    const eligible = slot.required || isAlwaysFill
+      ? candidates
+      : candidates.filter((c) => candidateLeadsToAlwaysFillSlot(c, items, depth + 1));
+    if (eligible.length === 0) continue;
+
+    let best = -Infinity;
+    for (const candidate of eligible) {
+      const s = subtreeScore(candidate, items, depth + 1);
+      if (s > best) best = s;
+    }
+    total += best;
+  }
+  return total;
 }
 
 // Looks for a still-unsatisfied keyword/category requirement among this
@@ -147,19 +189,19 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
     }
 
     if (!chosen) {
-      const isForegripSlot = FOREGRIP_SLOT_PATTERN.test(slot.nameId);
+      const isAlwaysFillSlot = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
       let eligible = candidates;
 
-      // Skip optional slots entirely — except a foregrip itself, or a
-      // mount that's the only path to reach one.
-      if (!slot.required && !isForegripSlot) {
-        eligible = candidates.filter((c) => candidateLeadsToForegrip(c, items, 0));
+      // Skip optional slots entirely — except a stock or foregrip itself,
+      // or an intermediate part that's the only path to reach one.
+      if (!slot.required && !isAlwaysFillSlot) {
+        eligible = candidates.filter((c) => candidateLeadsToAlwaysFillSlot(c, items, depth));
         if (eligible.length === 0) continue;
       }
 
       let bestScore = -Infinity;
       for (const candidate of eligible) {
-        const score = scoreMod(candidate.properties);
+        const score = subtreeScore(candidate, items, depth);
         if (score > bestScore) {
           bestScore = score;
           chosen = candidate;
