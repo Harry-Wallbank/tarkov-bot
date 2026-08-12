@@ -47,10 +47,14 @@
 // no trader sells at all, `playerLevel` must be at least FLEA_UNLOCK_LEVEL
 // (flea market access — an approximation, since the real threshold has
 // changed between game updates and isn't in this data). A locked item is
-// **never** recommended, full stop — if nothing available at the user's
-// level fits a required/always-fill slot, that slot is just left empty
-// and reported in `unavailableSlots` rather than substituting something
-// they can't actually buy yet. See `isAvailableToProfile`.
+// **never** recommended, full stop. See `isAvailableToProfile`.
+//
+// If nothing purchasable fits a required/always-fill slot, the weapon's own
+// stock part for that slot is used instead — via `weapon.properties.
+// defaultPreset`, the part list the gun actually ships with — since that's
+// already attached and free, not something the user needs to buy. Only if
+// even that doesn't exist does the slot get left empty and reported in
+// `unavailableSlots`. See `defaultItemIds` / the `default` flag on parts.
 
 const SKIP_SLOT_PATTERN = /scope/i;
 const MAGAZINE_SLOT_PATTERN = /magazine/i;
@@ -211,13 +215,21 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
     const isAlwaysFillSlot = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
 
     // Restrict to what the user can actually buy right now. A locked item
-    // is never recommended — if nothing here is available, the slot is
-    // just left empty (noted in unavailableSlots if it mattered) rather
-    // than substituting something out of reach.
-    const candidates = state.profile ? allCandidates.filter((c) => isAvailableToProfile(c, state.profile)) : allCandidates;
+    // is never recommended.
+    let candidates = state.profile ? allCandidates.filter((c) => isAvailableToProfile(c, state.profile)) : allCandidates;
+    let isDefaultFallback = false;
     if (candidates.length === 0) {
-      if (slot.required || isAlwaysFillSlot) state.unavailableSlots.push(humanizeSlotName(slot.nameId));
-      continue;
+      // Nothing purchasable — fall back to the part the weapon actually
+      // ships with for this slot, if any. It's already attached, so it
+      // doesn't need to be "available" in the profile sense.
+      const defaultItem = allCandidates.find((c) => state.defaultItemIds.has(c.id));
+      if ((slot.required || isAlwaysFillSlot) && defaultItem) {
+        candidates = [defaultItem];
+        isDefaultFallback = true;
+      } else {
+        if (slot.required || isAlwaysFillSlot) state.unavailableSlots.push(humanizeSlotName(slot.nameId));
+        continue;
+      }
     }
 
     let chosen = null;
@@ -268,6 +280,7 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
       recoilModifier: chosen.properties.recoilModifier ?? 0,
       price: bestPrice(chosen),
       forced: Boolean(satisfiedRequirement),
+      default: isDefaultFallback,
     });
 
     if (chosen.properties.slots?.length) {
@@ -288,7 +301,7 @@ function scoreMagazine(properties) {
   return capacity - malfunctionChance * 300 - Math.abs(Math.min(ergonomics, 0));
 }
 
-function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
+function pickBestMagazine(weapon, items, chosenItems, displayName, profile, defaultItemIds) {
   const magSlot = (weapon.properties.slots || []).find((s) => MAGAZINE_SLOT_PATTERN.test(s.nameId));
   if (!magSlot) return null;
 
@@ -297,8 +310,16 @@ function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
     .filter((it) => it?.properties?.capacity != null && !conflictsWithChosen(it, chosenItems));
   if (allCandidates.length === 0) return null;
 
-  const candidates = profile ? allCandidates.filter((c) => isAvailableToProfile(c, profile)) : allCandidates;
-  if (candidates.length === 0) return { unavailable: true };
+  let candidates = profile ? allCandidates.filter((c) => isAvailableToProfile(c, profile)) : allCandidates;
+  let isDefaultFallback = false;
+  if (candidates.length === 0) {
+    // Nothing purchasable — fall back to whichever magazine the weapon
+    // actually ships with, since that one's already attached.
+    const defaultMag = allCandidates.find((c) => defaultItemIds?.has(c.id));
+    if (!defaultMag) return { unavailable: true };
+    candidates = [defaultMag];
+    isDefaultFallback = true;
+  }
 
   const best = candidates.reduce((a, b) => (scoreMagazine(b.properties) > scoreMagazine(a.properties) ? b : a));
   return {
@@ -307,6 +328,7 @@ function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
     capacity: best.properties.capacity,
     ergonomics: best.properties.ergonomics ?? 0,
     malfunctionChance: best.properties.malfunctionChance ?? null,
+    default: isDefaultFallback,
   };
 }
 
@@ -316,12 +338,15 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
   const parts = [];
   const visited = new Set([weapon.id]);
   const chosenItems = [];
+  const defaultPreset = weapon.properties.defaultPreset ? items[weapon.properties.defaultPreset] : null;
+  const defaultItemIds = new Set((defaultPreset?.containsItems || []).map((ci) => ci.item));
   const state = {
     pendingKeywords: new Set((options.keywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean)),
     pendingCategoryIds: new Set(options.categoryIds || []),
     satisfied: [],
     unavailableSlots: [],
     profile: options.profile || null,
+    defaultItemIds,
   };
 
   optimizeSlots(weapon.properties.slots, items, 0, parts, visited, chosenItems, displayName, state);
@@ -351,7 +376,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     recoilHorizontal: Math.round(recoilHorizontal),
     totalCost: Math.round(totalCost),
     parts,
-    magazine: pickBestMagazine(weapon, items, chosenItems, displayName, state.profile),
+    magazine: pickBestMagazine(weapon, items, chosenItems, displayName, state.profile, defaultItemIds),
     unavailableSlots: state.unavailableSlots,
     requirements: {
       satisfied: state.satisfied,

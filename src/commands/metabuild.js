@@ -180,7 +180,7 @@ async function runBuild(interaction, weaponName, requirementsText, questName, pr
       url: weapon.wikiLink,
       description: truncate(formatBuild(weapon.build, questRequirement, profile), 3800),
       imageUrl: weapon.imageUrl,
-      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only, restricted to parts available at your trader levels. Image is the closest existing preset match, not a custom render.',
+      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only, restricted to parts available at your trader levels — falls back to the weapon\'s default part if nothing better is purchasable yet. Image is the closest existing preset match, not a custom render.',
     });
 
     await interaction.editReply({ embeds: [embed] });
@@ -223,7 +223,7 @@ function formatBuild(build, questRequirement, profile) {
   lines.push('', '**Parts**');
 
   for (const part of build.parts) {
-    const flag = part.forced ? ' 🔧' : '';
+    const flag = part.forced ? ' 🔧' : part.default ? ' *(default part — nothing better was available at your trader levels)*' : '';
     lines.push(`**${part.slotName}**: ${part.name} (${signed(part.ergonomics)} ergo, ${pct(part.recoilModifier)} recoil)${flag}`);
   }
 
@@ -243,7 +243,8 @@ function formatBuild(build, questRequirement, profile) {
     lines.push('', '**Best Magazine**', 'None available at your trader levels.');
   } else if (build.magazine) {
     const jam = build.magazine.malfunctionChance != null ? `, ${Math.round(build.magazine.malfunctionChance * 100)}% jam` : '';
-    lines.push('', '**Best Magazine**', `${build.magazine.name}`, `${build.magazine.capacity} rnd, ${signed(build.magazine.ergonomics)} ergo${jam}`);
+    const defaultNote = build.magazine.default ? ' *(default part — nothing better was available at your trader levels)*' : '';
+    lines.push('', '**Best Magazine**', `${build.magazine.name}${defaultNote}`, `${build.magazine.capacity} rnd, ${signed(build.magazine.ergonomics)} ergo${jam}`);
   }
 
   if (build.unavailableSlots?.length > 0) {
