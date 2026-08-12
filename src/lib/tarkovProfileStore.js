@@ -38,6 +38,17 @@ function setProfile(userId, { playerLevel, traderLevel }) {
   return data[userId];
 }
 
+// Used by /wipe: clears one user's saved profile (their own only) so their
+// next /metabuild prompts fresh — for a game wipe/prestige, where their
+// actual player and trader levels reset to 1.
+function deleteProfile(userId) {
+  const data = load();
+  const existed = userId in data;
+  delete data[userId];
+  save(data);
+  return existed;
+}
+
 // True once a profile has nothing left to gain from reconfirming — max
 // trader level and player level 30+. Once true, the daily reconfirm prompt
 // stops appearing for that user permanently (until they run /metabuild
@@ -54,4 +65,4 @@ function needsPrompt(profile) {
   return Date.now() - profile.confirmedAt > RECONFIRM_INTERVAL_MS;
 }
 
-module.exports = { getProfile, setProfile, isMaxed, needsPrompt, MAX_TRADER_LEVEL, MAX_RELEVANT_PLAYER_LEVEL };
+module.exports = { getProfile, setProfile, deleteProfile, isMaxed, needsPrompt, MAX_TRADER_LEVEL, MAX_RELEVANT_PLAYER_LEVEL };
