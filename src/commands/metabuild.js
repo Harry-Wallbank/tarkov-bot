@@ -180,7 +180,7 @@ async function runBuild(interaction, weaponName, requirementsText, questName, pr
       url: weapon.wikiLink,
       description: truncate(formatBuild(weapon.build, questRequirement, profile), 3800),
       imageUrl: weapon.imageUrl,
-      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only. 🔒 = not yet available at your levels. Image is the closest existing preset match, not a custom render.',
+      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only, restricted to parts available at your trader levels. Image is the closest existing preset match, not a custom render.',
     });
 
     await interaction.editReply({ embeds: [embed] });
@@ -223,8 +223,8 @@ function formatBuild(build, questRequirement, profile) {
   lines.push('', '**Parts**');
 
   for (const part of build.parts) {
-    const flags = `${part.forced ? ' 🔧' : ''}${part.locked ? ' 🔒' : ''}`;
-    lines.push(`**${part.slotName}**: ${part.name} (${signed(part.ergonomics)} ergo, ${pct(part.recoilModifier)} recoil)${flags}`);
+    const flag = part.forced ? ' 🔧' : '';
+    lines.push(`**${part.slotName}**: ${part.name} (${signed(part.ergonomics)} ergo, ${pct(part.recoilModifier)} recoil)${flag}`);
   }
 
   lines.push(
@@ -239,10 +239,18 @@ function formatBuild(build, questRequirement, profile) {
     `₽${build.totalCost.toLocaleString()} from traders`
   );
 
-  if (build.magazine) {
+  if (build.magazine?.unavailable) {
+    lines.push('', '**Best Magazine**', 'None available at your trader levels.');
+  } else if (build.magazine) {
     const jam = build.magazine.malfunctionChance != null ? `, ${Math.round(build.magazine.malfunctionChance * 100)}% jam` : '';
-    const lockedFlag = build.magazine.locked ? ' 🔒' : '';
-    lines.push('', '**Best Magazine**', `${build.magazine.name}${lockedFlag}`, `${build.magazine.capacity} rnd, ${signed(build.magazine.ergonomics)} ergo${jam}`);
+    lines.push('', '**Best Magazine**', `${build.magazine.name}`, `${build.magazine.capacity} rnd, ${signed(build.magazine.ergonomics)} ergo${jam}`);
+  }
+
+  if (build.unavailableSlots?.length > 0) {
+    lines.push('', '**Not available at your trader levels**');
+    for (const slotName of build.unavailableSlots) {
+      lines.push(`❌ ${slotName} — nothing affordable found; level up to unlock options here`);
+    }
   }
 
   const categoryNames = {};

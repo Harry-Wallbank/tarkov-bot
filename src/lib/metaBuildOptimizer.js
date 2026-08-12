@@ -46,10 +46,11 @@
 // i.e. base access, rather than being treated as fully locked). For items
 // no trader sells at all, `playerLevel` must be at least FLEA_UNLOCK_LEVEL
 // (flea market access — an approximation, since the real threshold has
-// changed between game updates and isn't in this data). If *nothing*
-// available at the user's level fits a required/always-fill slot, the
-// best overall part is used anyway and flagged `locked: true`
-// rather than leaving the slot empty — see `isAvailableToProfile`.
+// changed between game updates and isn't in this data). A locked item is
+// **never** recommended, full stop — if nothing available at the user's
+// level fits a required/always-fill slot, that slot is just left empty
+// and reported in `unavailableSlots` rather than substituting something
+// they can't actually buy yet. See `isAvailableToProfile`.
 
 const SKIP_SLOT_PATTERN = /scope/i;
 const MAGAZINE_SLOT_PATTERN = /magazine/i;
@@ -142,7 +143,11 @@ function candidateLeadsToAlwaysFillSlot(candidate, items, depth) {
 // own-score alone would always favor a mediocre direct part over an
 // adapter that unlocks a much better subtree, since the adapter itself is
 // typically ergonomically neutral or slightly negative.
-function subtreeScore(item, items, depth) {
+//
+// `profile`, when given, is applied here too — not just at the actual
+// selection step — so a candidate isn't ranked highly based on the
+// potential of a locked descendant it could never actually receive.
+function subtreeScore(item, items, depth, profile) {
   if (!item.properties) return 0;
   let total = scoreMod(item.properties);
   if (depth > LOOKAHEAD_DEPTH) return total;
@@ -151,7 +156,8 @@ function subtreeScore(item, items, depth) {
     if (SKIP_SLOT_PATTERN.test(slot.nameId) || MAGAZINE_SLOT_PATTERN.test(slot.nameId)) continue;
 
     const candidateIds = slot.filters?.allowedItems || [];
-    const candidates = candidateIds.map((id) => items[id]).filter((it) => it?.properties);
+    let candidates = candidateIds.map((id) => items[id]).filter((it) => it?.properties);
+    if (profile) candidates = candidates.filter((c) => isAvailableToProfile(c, profile));
     if (candidates.length === 0) continue;
 
     const isAlwaysFill = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
@@ -162,7 +168,7 @@ function subtreeScore(item, items, depth) {
 
     let best = -Infinity;
     for (const candidate of eligible) {
-      const s = subtreeScore(candidate, items, depth + 1);
+      const s = subtreeScore(candidate, items, depth + 1, profile);
       if (s > best) best = s;
     }
     total += best;
@@ -202,11 +208,17 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
 
     if (allCandidates.length === 0) continue;
 
-    // Prefer parts the user can actually buy at their profile's levels; if
-    // none of this slot's options are available to them, fall back to
-    // ranking every option so the slot still gets filled (flagged locked).
-    const affordable = state.profile ? allCandidates.filter((c) => isAvailableToProfile(c, state.profile)) : allCandidates;
-    const candidates = affordable.length > 0 ? affordable : allCandidates;
+    const isAlwaysFillSlot = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
+
+    // Restrict to what the user can actually buy right now. A locked item
+    // is never recommended — if nothing here is available, the slot is
+    // just left empty (noted in unavailableSlots if it mattered) rather
+    // than substituting something out of reach.
+    const candidates = state.profile ? allCandidates.filter((c) => isAvailableToProfile(c, state.profile)) : allCandidates;
+    if (candidates.length === 0) {
+      if (slot.required || isAlwaysFillSlot) state.unavailableSlots.push(humanizeSlotName(slot.nameId));
+      continue;
+    }
 
     let chosen = null;
     let satisfiedRequirement = null;
@@ -220,7 +232,6 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
     }
 
     if (!chosen) {
-      const isAlwaysFillSlot = ALWAYS_FILL_SLOT_PATTERN.test(slot.nameId);
       let eligible = candidates;
 
       // Skip optional slots entirely — except a stock or foregrip itself,
@@ -232,7 +243,7 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
 
       let bestScore = -Infinity;
       for (const candidate of eligible) {
-        const score = subtreeScore(candidate, items, depth);
+        const score = subtreeScore(candidate, items, depth, state.profile);
         if (score > bestScore) {
           bestScore = score;
           chosen = candidate;
@@ -257,7 +268,6 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
       recoilModifier: chosen.properties.recoilModifier ?? 0,
       price: bestPrice(chosen),
       forced: Boolean(satisfiedRequirement),
-      locked: Boolean(state.profile) && !isAvailableToProfile(chosen, state.profile),
     });
 
     if (chosen.properties.slots?.length) {
@@ -287,8 +297,8 @@ function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
     .filter((it) => it?.properties?.capacity != null && !conflictsWithChosen(it, chosenItems));
   if (allCandidates.length === 0) return null;
 
-  const affordable = profile ? allCandidates.filter((c) => isAvailableToProfile(c, profile)) : allCandidates;
-  const candidates = affordable.length > 0 ? affordable : allCandidates;
+  const candidates = profile ? allCandidates.filter((c) => isAvailableToProfile(c, profile)) : allCandidates;
+  if (candidates.length === 0) return { unavailable: true };
 
   const best = candidates.reduce((a, b) => (scoreMagazine(b.properties) > scoreMagazine(a.properties) ? b : a));
   return {
@@ -297,7 +307,6 @@ function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
     capacity: best.properties.capacity,
     ergonomics: best.properties.ergonomics ?? 0,
     malfunctionChance: best.properties.malfunctionChance ?? null,
-    locked: Boolean(profile) && !isAvailableToProfile(best, profile),
   };
 }
 
@@ -311,6 +320,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     pendingKeywords: new Set((options.keywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean)),
     pendingCategoryIds: new Set(options.categoryIds || []),
     satisfied: [],
+    unavailableSlots: [],
     profile: options.profile || null,
   };
 
@@ -342,6 +352,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     totalCost: Math.round(totalCost),
     parts,
     magazine: pickBestMagazine(weapon, items, chosenItems, displayName, state.profile),
+    unavailableSlots: state.unavailableSlots,
     requirements: {
       satisfied: state.satisfied,
       unmetKeywords: [...state.pendingKeywords],
