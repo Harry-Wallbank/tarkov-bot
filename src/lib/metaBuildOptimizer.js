@@ -38,15 +38,17 @@
 // not GraphQL — recursing through nested mod slot trees needs a query shape
 // nobody could verify while api.tarkov.dev has been down this entire build.
 //
-// `options.profile` (`{ playerLevel, traderLevel }`, from
+// `options.profile` (`{ playerLevel, traderLevels }`, from
 // tarkovProfileStore.js) restricts candidates to ones the user can actually
-// buy right now: `traderLevel` (1-4, applied uniformly across traders —
-// not tracked per-trader) must meet the item's cheapest `minTraderLevel`,
-// or, for items no trader sells at all, `playerLevel` must be at least
-// FLEA_UNLOCK_LEVEL (flea market access — an approximation, since the real
-// threshold has changed between game updates and isn't in this data). If
-// *nothing* available at the user's level fits a required/always-fill
-// slot, the best overall part is used anyway and flagged `locked: true`
+// buy right now: for each trader that sells the item, that specific
+// trader's tracked level must meet the item's `minTraderLevel` at that
+// trader (a trader the user was never asked about defaults to level 1,
+// i.e. base access, rather than being treated as fully locked). For items
+// no trader sells at all, `playerLevel` must be at least FLEA_UNLOCK_LEVEL
+// (flea market access — an approximation, since the real threshold has
+// changed between game updates and isn't in this data). If *nothing*
+// available at the user's level fits a required/always-fill slot, the
+// best overall part is used anyway and flagged `locked: true`
 // rather than leaving the slot empty — see `isAvailableToProfile`.
 
 const SKIP_SLOT_PATTERN = /scope/i;
@@ -91,7 +93,11 @@ function isAvailableToProfile(item, profile) {
   if (!profile) return true;
   const buys = item.buyFromTrader || [];
   if (buys.length === 0) return profile.playerLevel >= FLEA_UNLOCK_LEVEL;
-  return buys.some((b) => (b.minTraderLevel ?? 1) <= profile.traderLevel);
+  return buys.some((b) => {
+    const required = b.minTraderLevel ?? 1;
+    const owned = profile.traderLevels?.[b.trader] ?? 1;
+    return required <= owned;
+  });
 }
 
 // Bidirectional: rejects a candidate if it conflicts with anything already

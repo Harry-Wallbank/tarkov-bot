@@ -57,9 +57,9 @@ module.exports = {
     const profile = profileStore.getProfile(interaction.user.id);
     if (profileStore.needsPrompt(profile)) {
       const token = `${interaction.user.id}-${Date.now()}`;
-      pendingRequests.set(token, { weaponName, requirementsText, questName });
+      pendingRequests.set(token, { weaponName, requirementsText, questName, partialProfile: {} });
       setTimeout(() => pendingRequests.delete(token), PENDING_TTL_MS);
-      await interaction.showModal(buildProfileModal(token, profile));
+      await interaction.showModal(buildProfileModal(0, token, profile));
       return;
     }
 
@@ -68,65 +68,105 @@ module.exports = {
   },
 
   async modalSubmit(interaction) {
-    if (!interaction.customId.startsWith('metabuild_profile:')) return;
-    const token = interaction.customId.slice('metabuild_profile:'.length);
+    const match = interaction.customId.match(/^metabuild_profile(\d+):(.+)$/);
+    if (!match) return;
+    const page = Number(match[1]);
+    const token = match[2];
     const pending = pendingRequests.get(token);
-    pendingRequests.delete(token);
 
     if (!pending) {
       await interaction.reply({ content: 'That took too long — run `/metabuild` again.', ephemeral: true });
       return;
     }
 
-    const playerLevel = Number(interaction.fields.getTextInputValue('playerLevel').trim());
-    const traderLevel = Number(interaction.fields.getTextInputValue('traderLevel').trim());
+    const chunk = TRADER_CHUNKS[page];
+    if (page === 0) {
+      const playerLevel = parseLevel(interaction.fields.getTextInputValue('playerLevel'), 1, 99);
+      if (playerLevel === null) {
+        pendingRequests.delete(token);
+        await interaction.reply({ content: 'Player level must be a whole number between 1 and 99. Run `/metabuild` again.', ephemeral: true });
+        return;
+      }
+      pending.partialProfile.playerLevel = playerLevel;
+    }
 
-    if (!Number.isInteger(playerLevel) || playerLevel < 1 || playerLevel > 99) {
-      await interaction.reply({ content: 'Player level must be a whole number between 1 and 99.', ephemeral: true });
+    const traderLevels = pending.partialProfile.traderLevels || {};
+    for (const trader of chunk) {
+      const level = parseLevel(interaction.fields.getTextInputValue(trader.id), 1, profileStore.MAX_TRADER_LEVEL);
+      if (level === null) {
+        pendingRequests.delete(token);
+        await interaction.reply({
+          content: `${trader.name}'s level must be a whole number between 1 and ${profileStore.MAX_TRADER_LEVEL}. Run \`/metabuild\` again.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      traderLevels[trader.id] = level;
+    }
+    pending.partialProfile.traderLevels = traderLevels;
+
+    if (page + 1 < TRADER_CHUNKS.length) {
+      const existingProfile = profileStore.getProfile(interaction.user.id);
+      await interaction.showModal(buildProfileModal(page + 1, token, existingProfile));
       return;
     }
-    if (!Number.isInteger(traderLevel) || traderLevel < 1 || traderLevel > profileStore.MAX_TRADER_LEVEL) {
-      await interaction.reply({ content: `Trader level must be a whole number between 1 and ${profileStore.MAX_TRADER_LEVEL}.`, ephemeral: true });
-      return;
-    }
 
-    const profile = profileStore.setProfile(interaction.user.id, { playerLevel, traderLevel });
+    pendingRequests.delete(token);
+    const profile = profileStore.setProfile(interaction.user.id, pending.partialProfile);
 
     await interaction.deferReply();
     await runBuild(interaction, pending.weaponName, pending.requirementsText, pending.questName, profile);
   },
 };
 
-function buildProfileModal(token, existingProfile) {
-  const playerLevelInput = new TextInputBuilder()
-    .setCustomId('playerLevel')
-    .setLabel('Your player level')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g. 25')
-    .setMinLength(1)
-    .setMaxLength(2)
-    .setRequired(true);
-  const traderLevelInput = new TextInputBuilder()
-    .setCustomId('traderLevel')
-    .setLabel(`Your overall trader level (1-${profileStore.MAX_TRADER_LEVEL})`)
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g. 2')
-    .setMinLength(1)
-    .setMaxLength(1)
-    .setRequired(true);
+// Discord modals cap at 5 text inputs, so the 8 traders + player level
+// (9 fields total) are split across two chained modals: submitting page 0
+// immediately shows page 1, then the profile is saved and the build runs.
+const TRADER_CHUNKS = [profileStore.TRADERS.slice(0, 4), profileStore.TRADERS.slice(4)];
 
-  if (existingProfile) {
-    playerLevelInput.setValue(String(existingProfile.playerLevel));
-    traderLevelInput.setValue(String(existingProfile.traderLevel));
+function parseLevel(rawValue, min, max) {
+  const value = Number((rawValue || '').trim());
+  if (!Number.isInteger(value) || value < min || value > max) return null;
+  return value;
+}
+
+function buildProfileModal(page, token, existingProfile) {
+  const chunk = TRADER_CHUNKS[page];
+  const rows = [];
+
+  if (page === 0) {
+    const playerLevelInput = new TextInputBuilder()
+      .setCustomId('playerLevel')
+      .setLabel('Your player level')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('e.g. 25')
+      .setMinLength(1)
+      .setMaxLength(2)
+      .setRequired(true);
+    if (existingProfile) playerLevelInput.setValue(String(existingProfile.playerLevel));
+    rows.push(new ActionRowBuilder().addComponents(playerLevelInput));
   }
 
-  return new ModalBuilder()
-    .setCustomId(`metabuild_profile:${token}`)
-    .setTitle(existingProfile ? 'Confirm your Tarkov profile' : 'Set up your Tarkov profile')
-    .addComponents(
-      new ActionRowBuilder().addComponents(playerLevelInput),
-      new ActionRowBuilder().addComponents(traderLevelInput)
-    );
+  for (const trader of chunk) {
+    const input = new TextInputBuilder()
+      .setCustomId(trader.id)
+      .setLabel(`${trader.name} level (1-${profileStore.MAX_TRADER_LEVEL})`)
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('e.g. 2')
+      .setMinLength(1)
+      .setMaxLength(1)
+      .setRequired(true);
+    const existingLevel = existingProfile?.traderLevels?.[trader.id];
+    if (existingLevel) input.setValue(String(existingLevel));
+    rows.push(new ActionRowBuilder().addComponents(input));
+  }
+
+  const title =
+    TRADER_CHUNKS.length > 1
+      ? `Tarkov profile (${page + 1}/${TRADER_CHUNKS.length})`
+      : 'Set up your Tarkov profile';
+
+  return new ModalBuilder().setCustomId(`metabuild_profile${page}:${token}`).setTitle(title).addComponents(...rows);
 }
 
 async function runBuild(interaction, weaponName, requirementsText, questName, profile) {
@@ -205,7 +245,8 @@ function pctChange(before, after) {
 function formatBuild(build, questRequirement, profile) {
   const lines = ['**Meta build — Maximum Ergonomics**'];
   if (profile) {
-    lines.push(`Profile: Player Lvl ${profile.playerLevel} · Trader Lvl ${profile.traderLevel}`);
+    const traderSummary = profileStore.TRADERS.map((t) => `${t.name} ${profile.traderLevels?.[t.id] ?? '?'}`).join(', ');
+    lines.push(`Profile: Player Lvl ${profile.playerLevel} · ${traderSummary}`);
   }
   lines.push('', '**Parts**');
 
