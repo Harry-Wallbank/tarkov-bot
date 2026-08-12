@@ -8,7 +8,7 @@ const {
 const { getWikiSummary } = require('../lib/tarkovWiki');
 const { buildInfoEmbed, truncate } = require('../lib/embeds');
 const profileStore = require('../lib/tarkovProfileStore');
-const { TRADER_CHUNKS, parseLevel, buildProfileModal } = require('../lib/tarkovProfileModal');
+const { TRADER_CHUNKS, parseLevel, buildProfileModal, buildContinueButtonRow } = require('../lib/tarkovProfileModal');
 
 // Command args stashed here while a profile modal is open, keyed by a
 // short-lived token embedded in the modal's customId. In-memory only —
@@ -107,8 +107,14 @@ module.exports = {
     pending.partialProfile.traderLevels = traderLevels;
 
     if (page + 1 < TRADER_CHUNKS.length) {
-      const existingProfile = profileStore.getProfile(interaction.user.id);
-      await interaction.showModal(buildProfileModal('metabuild', page + 1, token, existingProfile));
+      // A modal submission can't itself open another modal — Discord
+      // requires a fresh interaction (a button click) for that — so prompt
+      // a "Continue" button instead of chaining straight into page 2.
+      await interaction.reply({
+        content: `Got it. Click continue for the rest (${page + 2}/${TRADER_CHUNKS.length}).`,
+        components: [buildContinueButtonRow('metabuild', token, page + 1)],
+        ephemeral: true,
+      });
       return;
     }
 
@@ -117,6 +123,21 @@ module.exports = {
 
     await interaction.deferReply();
     await runBuild(interaction, pending.weaponName, pending.requirementsText, pending.questName, profile);
+  },
+
+  async buttonClick(interaction) {
+    const match = interaction.customId.match(/^metabuild_continue(\d+):(.+)$/);
+    if (!match) return;
+    const page = Number(match[1]);
+    const token = match[2];
+
+    if (!pendingRequests.has(token)) {
+      await interaction.reply({ content: 'That took too long — run `/metabuild` again.', ephemeral: true });
+      return;
+    }
+
+    const existingProfile = profileStore.getProfile(interaction.user.id);
+    await interaction.showModal(buildProfileModal('metabuild', page, token, existingProfile));
   },
 };
 

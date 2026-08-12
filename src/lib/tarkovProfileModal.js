@@ -3,10 +3,14 @@
 // prompt and /updatetrader's on-demand update, so the two stay consistent.
 //
 // Discord modals cap at 5 text inputs, and player level + all 8 tracked
-// traders is 9 fields, so the flow is two chained modals: submitting page 0
-// (player level + first 4 traders) immediately shows page 1 (remaining 4).
+// traders is 9 fields, so the flow is two modals with a button in between:
+// submitting page 0 (player level + first 4 traders) shows a "Continue"
+// button rather than immediately opening page 1 — a modal-submit
+// interaction can't itself show another modal in this discord.js version
+// (confirmed live: `interaction.showModal is not a function` when tried),
+// but a button click can, which is the standard supported pattern.
 
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const profileStore = require('./tarkovProfileStore');
 
 const TRADER_CHUNKS = [profileStore.TRADERS.slice(0, 4), profileStore.TRADERS.slice(4)];
@@ -56,4 +60,12 @@ function buildProfileModal(commandName, page, token, existingProfile) {
   return new ModalBuilder().setCustomId(`${commandName}_profile${page}:${token}`).setTitle(title).addComponents(...rows);
 }
 
-module.exports = { TRADER_CHUNKS, parseLevel, buildProfileModal };
+function buildContinueButtonRow(commandName, token, nextPage) {
+  const button = new ButtonBuilder()
+    .setCustomId(`${commandName}_continue${nextPage}:${token}`)
+    .setLabel(`Continue (${nextPage + 1}/${TRADER_CHUNKS.length})`)
+    .setStyle(ButtonStyle.Primary);
+  return new ActionRowBuilder().addComponents(button);
+}
+
+module.exports = { TRADER_CHUNKS, parseLevel, buildProfileModal, buildContinueButtonRow };
