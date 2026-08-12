@@ -37,12 +37,24 @@
 // This only runs against the JSON fallback dataset (see tarkovJsonApi.js),
 // not GraphQL — recursing through nested mod slot trees needs a query shape
 // nobody could verify while api.tarkov.dev has been down this entire build.
+//
+// `options.profile` (`{ playerLevel, traderLevel }`, from
+// tarkovProfileStore.js) restricts candidates to ones the user can actually
+// buy right now: `traderLevel` (1-4, applied uniformly across traders —
+// not tracked per-trader) must meet the item's cheapest `minTraderLevel`,
+// or, for items no trader sells at all, `playerLevel` must be at least
+// FLEA_UNLOCK_LEVEL (flea market access — an approximation, since the real
+// threshold has changed between game updates and isn't in this data). If
+// *nothing* available at the user's level fits a required/always-fill
+// slot, the best overall part is used anyway and flagged `locked: true`
+// rather than leaving the slot empty — see `isAvailableToProfile`.
 
 const SKIP_SLOT_PATTERN = /scope/i;
 const MAGAZINE_SLOT_PATTERN = /magazine/i;
 const ALWAYS_FILL_SLOT_PATTERN = /foregrip|stock/i;
 const MAX_DEPTH = 6;
 const LOOKAHEAD_DEPTH = 4;
+const FLEA_UNLOCK_LEVEL = 15;
 
 const SLOT_LABEL_OVERRIDES = {
   sight_rear: 'Rear Sight',
@@ -73,6 +85,13 @@ function scoreMod(properties) {
   const ergonomics = properties.ergonomics ?? 0;
   const recoilModifier = properties.recoilModifier ?? 0; // negative = reduction = good
   return ergonomics - recoilModifier * 100;
+}
+
+function isAvailableToProfile(item, profile) {
+  if (!profile) return true;
+  const buys = item.buyFromTrader || [];
+  if (buys.length === 0) return profile.playerLevel >= FLEA_UNLOCK_LEVEL;
+  return buys.some((b) => (b.minTraderLevel ?? 1) <= profile.traderLevel);
 }
 
 // Bidirectional: rejects a candidate if it conflicts with anything already
@@ -171,11 +190,17 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
   for (const slot of slots || []) {
     if (SKIP_SLOT_PATTERN.test(slot.nameId) || MAGAZINE_SLOT_PATTERN.test(slot.nameId)) continue;
 
-    const candidates = (slot.filters?.allowedItems || [])
+    const allCandidates = (slot.filters?.allowedItems || [])
       .map((id) => items[id])
       .filter((it) => it && it.properties && !visited.has(it.id) && !conflictsWithChosen(it, chosenItems));
 
-    if (candidates.length === 0) continue;
+    if (allCandidates.length === 0) continue;
+
+    // Prefer parts the user can actually buy at their profile's levels; if
+    // none of this slot's options are available to them, fall back to
+    // ranking every option so the slot still gets filled (flagged locked).
+    const affordable = state.profile ? allCandidates.filter((c) => isAvailableToProfile(c, state.profile)) : allCandidates;
+    const candidates = affordable.length > 0 ? affordable : allCandidates;
 
     let chosen = null;
     let satisfiedRequirement = null;
@@ -226,6 +251,7 @@ function optimizeSlots(slots, items, depth, parts, visited, chosenItems, display
       recoilModifier: chosen.properties.recoilModifier ?? 0,
       price: bestPrice(chosen),
       forced: Boolean(satisfiedRequirement),
+      locked: Boolean(state.profile) && !isAvailableToProfile(chosen, state.profile),
     });
 
     if (chosen.properties.slots?.length) {
@@ -246,14 +272,17 @@ function scoreMagazine(properties) {
   return capacity - malfunctionChance * 300 - Math.abs(Math.min(ergonomics, 0));
 }
 
-function pickBestMagazine(weapon, items, chosenItems, displayName) {
+function pickBestMagazine(weapon, items, chosenItems, displayName, profile) {
   const magSlot = (weapon.properties.slots || []).find((s) => MAGAZINE_SLOT_PATTERN.test(s.nameId));
   if (!magSlot) return null;
 
-  const candidates = (magSlot.filters?.allowedItems || [])
+  const allCandidates = (magSlot.filters?.allowedItems || [])
     .map((id) => items[id])
     .filter((it) => it?.properties?.capacity != null && !conflictsWithChosen(it, chosenItems));
-  if (candidates.length === 0) return null;
+  if (allCandidates.length === 0) return null;
+
+  const affordable = profile ? allCandidates.filter((c) => isAvailableToProfile(c, profile)) : allCandidates;
+  const candidates = affordable.length > 0 ? affordable : allCandidates;
 
   const best = candidates.reduce((a, b) => (scoreMagazine(b.properties) > scoreMagazine(a.properties) ? b : a));
   return {
@@ -262,6 +291,7 @@ function pickBestMagazine(weapon, items, chosenItems, displayName) {
     capacity: best.properties.capacity,
     ergonomics: best.properties.ergonomics ?? 0,
     malfunctionChance: best.properties.malfunctionChance ?? null,
+    locked: Boolean(profile) && !isAvailableToProfile(best, profile),
   };
 }
 
@@ -275,6 +305,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     pendingKeywords: new Set((options.keywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean)),
     pendingCategoryIds: new Set(options.categoryIds || []),
     satisfied: [],
+    profile: options.profile || null,
   };
 
   optimizeSlots(weapon.properties.slots, items, 0, parts, visited, chosenItems, displayName, state);
@@ -304,7 +335,7 @@ function optimizeWeapon(weapon, items, displayName, options = {}) {
     recoilHorizontal: Math.round(recoilHorizontal),
     totalCost: Math.round(totalCost),
     parts,
-    magazine: pickBestMagazine(weapon, items, chosenItems, displayName),
+    magazine: pickBestMagazine(weapon, items, chosenItems, displayName, state.profile),
     requirements: {
       satisfied: state.satisfied,
       unmetKeywords: [...state.pendingKeywords],

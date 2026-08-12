@@ -13,6 +13,25 @@ module.exports = {
       return;
     }
 
+    if (interaction.isModalSubmit()) {
+      for (const command of client.commands.values()) {
+        if (typeof command.modalSubmit !== 'function' || !interaction.customId.startsWith(`${command.data.name}_`)) continue;
+        try {
+          await command.modalSubmit(interaction);
+        } catch (error) {
+          console.error(`Error in /${command.data.name} modal submit:`, error);
+          const payload = { content: 'Something went wrong processing that.', ephemeral: true };
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(payload).catch(() => {});
+          } else {
+            await interaction.reply(payload).catch(() => {});
+          }
+        }
+        return;
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     const command = client.commands.get(interaction.commandName);

@@ -2,5 +2,6 @@ node_modules/
 .env
 src/data/reactionRoles.json
 src/data/tarkovAccess.json
+src/data/tarkovProfiles.json
 npm-debug.log*
 CLAUDE.md
