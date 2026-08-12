@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const {
   getWeaponMetaBuild,
   searchWeaponNames,
@@ -8,6 +8,7 @@ const {
 const { getWikiSummary } = require('../lib/tarkovWiki');
 const { buildInfoEmbed, truncate } = require('../lib/embeds');
 const profileStore = require('../lib/tarkovProfileStore');
+const { TRADER_CHUNKS, parseLevel, buildProfileModal } = require('../lib/tarkovProfileModal');
 
 // Command args stashed here while a profile modal is open, keyed by a
 // short-lived token embedded in the modal's customId. In-memory only —
@@ -59,7 +60,7 @@ module.exports = {
       const token = `${interaction.user.id}-${Date.now()}`;
       pendingRequests.set(token, { weaponName, requirementsText, questName, partialProfile: {} });
       setTimeout(() => pendingRequests.delete(token), PENDING_TTL_MS);
-      await interaction.showModal(buildProfileModal(0, token, profile));
+      await interaction.showModal(buildProfileModal('metabuild', 0, token, profile));
       return;
     }
 
@@ -107,7 +108,7 @@ module.exports = {
 
     if (page + 1 < TRADER_CHUNKS.length) {
       const existingProfile = profileStore.getProfile(interaction.user.id);
-      await interaction.showModal(buildProfileModal(page + 1, token, existingProfile));
+      await interaction.showModal(buildProfileModal('metabuild', page + 1, token, existingProfile));
       return;
     }
 
@@ -118,56 +119,6 @@ module.exports = {
     await runBuild(interaction, pending.weaponName, pending.requirementsText, pending.questName, profile);
   },
 };
-
-// Discord modals cap at 5 text inputs, so the 8 traders + player level
-// (9 fields total) are split across two chained modals: submitting page 0
-// immediately shows page 1, then the profile is saved and the build runs.
-const TRADER_CHUNKS = [profileStore.TRADERS.slice(0, 4), profileStore.TRADERS.slice(4)];
-
-function parseLevel(rawValue, min, max) {
-  const value = Number((rawValue || '').trim());
-  if (!Number.isInteger(value) || value < min || value > max) return null;
-  return value;
-}
-
-function buildProfileModal(page, token, existingProfile) {
-  const chunk = TRADER_CHUNKS[page];
-  const rows = [];
-
-  if (page === 0) {
-    const playerLevelInput = new TextInputBuilder()
-      .setCustomId('playerLevel')
-      .setLabel('Your player level')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g. 25')
-      .setMinLength(1)
-      .setMaxLength(2)
-      .setRequired(true);
-    if (existingProfile) playerLevelInput.setValue(String(existingProfile.playerLevel));
-    rows.push(new ActionRowBuilder().addComponents(playerLevelInput));
-  }
-
-  for (const trader of chunk) {
-    const input = new TextInputBuilder()
-      .setCustomId(trader.id)
-      .setLabel(`${trader.name} level (1-${profileStore.MAX_TRADER_LEVEL})`)
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g. 2')
-      .setMinLength(1)
-      .setMaxLength(1)
-      .setRequired(true);
-    const existingLevel = existingProfile?.traderLevels?.[trader.id];
-    if (existingLevel) input.setValue(String(existingLevel));
-    rows.push(new ActionRowBuilder().addComponents(input));
-  }
-
-  const title =
-    TRADER_CHUNKS.length > 1
-      ? `Tarkov profile (${page + 1}/${TRADER_CHUNKS.length})`
-      : 'Set up your Tarkov profile';
-
-  return new ModalBuilder().setCustomId(`metabuild_profile${page}:${token}`).setTitle(title).addComponents(...rows);
-}
 
 async function runBuild(interaction, weaponName, requirementsText, questName, profile) {
   try {
