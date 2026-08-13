@@ -58,9 +58,24 @@ async function checkAndPull() {
   return true;
 }
 
+// Under systemd (which sets INVOCATION_ID for every unit it starts), don't
+// self-spawn — a detached manual child would fall outside systemd's
+// tracking entirely: a clean exit(0) under `Restart=on-failure` means
+// systemd won't bring anything back, leaving an orphaned, unsupervised
+// process running, and a later `systemctl restart` would then start a
+// second instance alongside it (two bots on the same Discord token). The
+// unit's `Restart=always` instead brings the *same* supervised process
+// back after a plain exit, so just exit and let systemd do it.
+//
+// On hosts with no such supervisor (Railway, Wispbyte, manual `node`),
+// nothing else would restart the process, so it still has to fork its own
+// replacement before exiting.
 function respawnSelf() {
-  const { spawn } = require('node:child_process');
   console.log('[auto-update] Restarting with updated code...');
+  if (process.env.INVOCATION_ID) {
+    process.exit(0);
+  }
+  const { spawn } = require('node:child_process');
   const child = spawn(process.argv[0], process.argv.slice(1), {
     cwd: REPO_ROOT,
     detached: true,
