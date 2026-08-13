@@ -179,8 +179,7 @@ async function runBuild(interaction, weaponName, requirementsText, questName, pr
       title: weapon.name,
       url: weapon.wikiLink,
       description: truncate(formatBuild(weapon.build, questRequirement, profile), 3800),
-      imageUrl: weapon.imageUrl,
-      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only, restricted to parts available at your trader levels — falls back to the weapon\'s default part if nothing better is purchasable yet. Image is the closest existing preset match, not a custom render.',
+      footer: 'Greedy per-slot optimizer over Tarkov.dev data. Required slots + stock/foregrip only, restricted to parts available at your trader levels — falls back to the weapon\'s default part if nothing better is purchasable yet.',
     });
 
     await interaction.editReply({ embeds: [embed] });
