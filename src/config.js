@@ -23,5 +23,4 @@ module.exports = {
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean),
-  autoUpdateEnabled: process.env.AUTO_UPDATE !== 'false',
 };
