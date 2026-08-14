@@ -1,13 +1,18 @@
-// Checks the git remote once a day; if there are new commits, pulls them
-// (fast-forward only — never touches local changes) and respawns the bot
-// under the updated code. Requires the bot to actually be a git clone with
-// an `origin` remote; if it isn't, checks are skipped with a log message
-// rather than failing.
+// Polls the git remote every few minutes; if there are new commits, pulls
+// them (fast-forward only — never touches local changes) and respawns the
+// bot under the updated code. Requires the bot to actually be a git clone
+// with an `origin` remote; if it isn't, checks are skipped with a log
+// message rather than failing.
+//
+// `git fetch` against a small private repo is cheap enough that a 5-minute
+// interval is no real load on either end — this is the sole update
+// mechanism (no webhook), so the interval doubles as the worst-case deploy
+// latency after a push.
 
 const { execFile } = require('node:child_process');
 const path = require('node:path');
 
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
